@@ -65,6 +65,74 @@ const DataChart: React.FC<DataChartProps> = ({ type, data, title, height = 400, 
     }
   }, [selectedYear, type]);
 
+  // Helper function for robust year matching
+  const findYearColumnIndex = (headers: any[], targetYear: number): number => {
+    console.log(`🔍 Finding column for year ${targetYear} in headers:`, headers);
+
+    for (let i = 1; i < headers.length; i++) {
+      const header = String(headers[i] || '').trim();
+
+      // Method 1: Exact year match (e.g., "2023")
+      if (header === targetYear.toString()) {
+        console.log(`✅ Exact match found at column ${i}: "${header}"`);
+        return i;
+      }
+
+      // Method 2: Parse as number
+      const headerAsNumber = parseInt(header);
+      if (!isNaN(headerAsNumber) && headerAsNumber === targetYear) {
+        console.log(`✅ Number match found at column ${i}: "${header}" → ${headerAsNumber}`);
+        return i;
+      }
+
+      // Method 3: Extract year from text (e.g., "Data 2023", "Tahun 2023")
+      const yearMatch = header.match(/\b(20\d{2})\b/);
+      if (yearMatch && parseInt(yearMatch[1]) === targetYear) {
+        console.log(`✅ Pattern match found at column ${i}: "${header}" → ${yearMatch[1]}`);
+        return i;
+      }
+    }
+
+    console.log(`❌ No column found for year ${targetYear}`);
+    return -1;
+  };
+
+  // Helper function to extract pie chart data for specific year
+  const extractPieChartData = (headers: any[], dataRows: any[][], yearColumnIndex: number): { labels: string[], values: number[] } => {
+    const year = headers[yearColumnIndex];
+    console.log(`🥧 Extracting pie chart data for year column ${yearColumnIndex} (${year})`);
+
+    const labels: string[] = [];
+    const values: number[] = [];
+
+    dataRows.forEach((row, rowIndex) => {
+      const label = String(row[0] || `Item ${rowIndex + 1}`).trim();
+      const rawValue = row[yearColumnIndex];
+
+      // Parse value more robustly
+      let value = 0;
+      if (rawValue !== null && rawValue !== undefined && rawValue !== '') {
+        const cleanValue = String(rawValue).replace(/[^\d.-]/g, '');
+        const parsedValue = parseFloat(cleanValue);
+        if (!isNaN(parsedValue)) {
+          value = parsedValue;
+        }
+      }
+
+      // Only include rows with meaningful labels and positive values for pie chart
+      if (label && !label.toLowerCase().includes('total') && value > 0) {
+        labels.push(label);
+        values.push(value);
+        console.log(`📊 Added pie slice: "${label}" = ${value}`);
+      } else {
+        console.log(`⚠️ Skipped row ${rowIndex}: label="${label}", value=${value}`);
+      }
+    });
+
+    console.log(`🥧 Final pie chart data: ${labels.length} slices, total value: ${values.reduce((sum, v) => sum + v, 0)}`);
+    return { labels, values };
+  };
+
   // Process data for chart
   const processDataForChart = (): ChartData => {
     const timestamp = new Date().toLocaleTimeString();
@@ -137,7 +205,7 @@ const DataChart: React.FC<DataChartProps> = ({ type, data, title, height = 400, 
       return label.trim() || `Item ${index + 1}`;
     });
 
-    console.log(`🏷️ DataChart labels (${labels.length}):`, labels);
+    console.log(`🏷�� DataChart labels (${labels.length}):`, labels);
 
     // Extract datasets (year columns)
     const datasets = [];
@@ -152,120 +220,121 @@ const DataChart: React.FC<DataChartProps> = ({ type, data, title, height = 400, 
       'rgba(34, 197, 94, 0.8)',   // Light Green
     ];
 
-    // For each year column (starting from index 1)
-    for (let i = 1; i < headers.length; i++) {
-      const rawHeader = headers[i];
-      let year = String(rawHeader || `Column ${i}`).trim();
+    // Different processing for different chart types
+    if (type === 'pie' || type === 'doughnut') {
+      // PIE CHART LOGIC: Focus on single year data
+      console.log(`🥧 Processing pie chart data for selectedYear: ${selectedYear}`);
 
-      // Clean up the year label - remove any non-numeric characters except spaces and dashes
-      if (year.match(/^\d{4}$/)) {
-        // It's a pure year like "2011"
-        year = year;
-      } else if (year.includes('20') && year.length > 4) {
-        // Extract year from text like "Data 2011" or "Tahun 2011"
-        const yearMatch = year.match(/20\d{2}/);
-        if (yearMatch) {
-          year = yearMatch[0];
+      let targetColumnIndex = -1;
+      let targetYear = selectedYear;
+
+      // Determine which year column to use
+      if (selectedYear !== undefined && selectedYear !== null) {
+        targetColumnIndex = findYearColumnIndex(headers, selectedYear);
+
+        if (targetColumnIndex === -1) {
+          console.log(`⚠️ Selected year ${selectedYear} not found, trying to find closest year`);
+
+          // Find closest available year
+          let closestYear = null;
+          let minDifference = Infinity;
+
+          for (let i = 1; i < headers.length; i++) {
+            const header = String(headers[i] || '').trim();
+            const yearMatch = header.match(/\b(20\d{2})\b/);
+            if (yearMatch) {
+              const year = parseInt(yearMatch[1]);
+              const difference = Math.abs(year - selectedYear);
+              if (difference < minDifference) {
+                minDifference = difference;
+                closestYear = year;
+                targetColumnIndex = i;
+              }
+            }
+          }
+
+          if (closestYear) {
+            console.log(`🎯 Using closest year ${closestYear} instead of ${selectedYear}`);
+            targetYear = closestYear;
+          }
         }
       }
 
-      console.log(`📅 DataChart year column ${i}: "${rawHeader}" → "${year}"`);
+      // Fallback to first data column if no year found
+      if (targetColumnIndex === -1 && headers.length > 1) {
+        targetColumnIndex = 1;
+        targetYear = headers[1];
+        console.log(`🔄 Fallback: Using first data column ${targetColumnIndex} (${targetYear})`);
+      }
 
-      const values = filteredDataRows.map((row, rowIndex) => {
-        const rawValue = row[i];
-        let value = parseFloat(String(rawValue || 0).replace(/[^\d.-]/g, ''));
+      if (targetColumnIndex > 0) {
+        const pieData = extractPieChartData(headers, filteredDataRows, targetColumnIndex);
 
-        if (isNaN(value)) {
-          console.log(`⚠️ DataChart: Invalid value at row ${rowIndex}, col ${i}: "${rawValue}" → 0`);
-          value = 0;
-        }
+        if (pieData.labels.length > 0 && pieData.values.length > 0) {
+          // Generate colors for pie slices
+          const pieColors = pieData.values.map((_, index) => colors[index % colors.length]);
 
-        return value;
-      });
-
-      console.log(`💹 DataChart values for "${year}" (${values.length} values):`, values);
-
-      const colorIndex = (i - 1) % colors.length;
-
-      if (type === 'bar' || type === 'line') {
-        datasets.push({
-          label: year,
-          data: values,
-          backgroundColor: type === 'bar' ? colors[colorIndex] : 'transparent',
-          borderColor: colors[colorIndex],
-          borderWidth: 2,
-          fill: type === 'line' ? false : undefined,
-        });
-      } else if (type === 'pie' || type === 'doughnut') {
-        // For pie/doughnut, use selectedYear if provided, otherwise use first dataset
-        console.log(`🔍 Pie chart year check: column="${year}", selectedYear=${selectedYear}, index=${i}`);
-
-        let shouldUseThisYear = false;
-
-        if (selectedYear !== undefined && selectedYear !== null) {
-          // Try different ways to match the year
-          const yearAsNumber = parseInt(year);
-          const selectedYearAsString = selectedYear.toString();
-          const yearString = year.toString().trim();
-
-          shouldUseThisYear = (
-            yearAsNumber === selectedYear ||
-            yearString === selectedYearAsString ||
-            yearString.includes(selectedYearAsString) ||
-            selectedYearAsString.includes(yearString)
-          );
-
-          console.log(`🔍 Year matching detailed: column="${year}" (parsed: ${yearAsNumber}) vs selectedYear=${selectedYear} (string: "${selectedYearAsString}") => ${shouldUseThisYear}`);
-        } else {
-          // Use first data column (index 1) if no year selected
-          shouldUseThisYear = (i === 1);
-          console.log(`🔍 No year selected, using first data column (index ${i}): ${shouldUseThisYear}`);
-        }
-
-        if (shouldUseThisYear) {
-          console.log(`🥧 ✅ Using year ${year} for pie chart (values: ${values.length} items)`);
-          console.log(`🥧 Data values:`, values);
           datasets.push({
-            label: `Data ${year}`,
-            data: values,
-            backgroundColor: colors.slice(0, values.length),
-            borderColor: colors.slice(0, values.length).map(color => color.replace('0.8', '1')),
-            borderWidth: 1,
+            label: `Tahun ${targetYear}`,
+            data: pieData.values,
+            backgroundColor: pieColors,
+            borderColor: pieColors.map(color => color.replace('0.8', '1')),
+            borderWidth: 2,
           });
+
+          // Update labels for pie chart
+          labels.length = 0;
+          labels.push(...pieData.labels);
+
+          console.log(`✅ Pie chart dataset created with ${pieData.labels.length} slices for year ${targetYear}`);
         } else {
-          console.log(`🥧 ❌ Skipping year ${year} for pie chart`);
+          console.error(`❌ No valid pie chart data found for year ${targetYear}`);
         }
       }
-    }
 
-    // Fallback for pie/doughnut charts - ensure we have at least one dataset
-    if ((type === 'pie' || type === 'doughnut') && datasets.length === 0 && filteredDataRows.length > 0) {
-      console.log(`🚨 No datasets found for pie chart, using fallback (first data column)`);
+    } else {
+      // BAR/LINE CHART LOGIC: Process all year columns
+      for (let i = 1; i < headers.length; i++) {
+        const rawHeader = headers[i];
+        let year = String(rawHeader || `Column ${i}`).trim();
 
-      // Use first data column as fallback
-      const firstDataColumnIndex = 1;
-      if (headers.length > firstDataColumnIndex) {
-        const fallbackYear = headers[firstDataColumnIndex];
-        const fallbackValues = filteredDataRows.map((row, rowIndex) => {
-          const rawValue = row[firstDataColumnIndex];
+        // Clean up the year label for consistent formatting
+        const yearMatch = year.match(/\b(20\d{2})\b/);
+        let cleanYear = year;
+        if (yearMatch) {
+          cleanYear = yearMatch[1];
+        } else if (year.match(/^\d{4}$/)) {
+          cleanYear = year;
+        }
+
+        // Standardized label format for all chart types
+        const standardLabel = `Tahun ${cleanYear}`;
+
+        console.log(`📅 DataChart year column ${i}: "${rawHeader}" → "${standardLabel}"`);
+
+        const values = filteredDataRows.map((row, rowIndex) => {
+          const rawValue = row[i];
           let value = parseFloat(String(rawValue || 0).replace(/[^\d.-]/g, ''));
 
           if (isNaN(value)) {
-            console.log(`⚠️ DataChart fallback: Invalid value at row ${rowIndex}: "${rawValue}" → 0`);
+            console.log(`⚠️ DataChart: Invalid value at row ${rowIndex}, col ${i}: "${rawValue}" → 0`);
             value = 0;
           }
 
           return value;
         });
 
-        console.log(`🥧 Fallback dataset created for year ${fallbackYear}:`, fallbackValues);
+        console.log(`💹 DataChart values for "${standardLabel}" (${values.length} values):`, values);
+
+        const colorIndex = (i - 1) % colors.length;
 
         datasets.push({
-          label: `Data ${fallbackYear}`,
-          data: fallbackValues,
-          backgroundColor: colors.slice(0, fallbackValues.length),
-          borderColor: colors.slice(0, fallbackValues.length).map(color => color.replace('0.8', '1')),
-          borderWidth: 1,
+          label: standardLabel,
+          data: values,
+          backgroundColor: type === 'bar' ? colors[colorIndex] : 'transparent',
+          borderColor: colors[colorIndex],
+          borderWidth: 2,
+          fill: type === 'line' ? false : undefined,
         });
       }
     }
@@ -288,7 +357,7 @@ const DataChart: React.FC<DataChartProps> = ({ type, data, title, height = 400, 
       selectedYear,
       type
     });
-    console.log(`📊 Chart data hash created:`, hash.substring(0, 100) + '...');
+    console.log(`�� Chart data hash created:`, hash.substring(0, 100) + '...');
     return hash;
   }, [chartData.labels, chartData.datasets, selectedYear, type]);
 
@@ -339,27 +408,97 @@ const DataChart: React.FC<DataChartProps> = ({ type, data, title, height = 400, 
 
   const yAxisBounds = calculateYAxisBounds();
 
+  // Generate adaptive legend configuration based on chart type
+  const getLegendConfig = () => {
+    const baseConfig = {
+      labels: {
+        font: {
+          family: 'Inter',
+          size: 12,
+        },
+        color: '#374151',
+        usePointStyle: false,
+        padding: 15,
+      },
+    };
+
+    switch (type) {
+      case 'pie':
+      case 'doughnut':
+        return {
+          ...baseConfig,
+          position: 'right' as const,
+          align: 'start' as const,
+          labels: {
+            ...baseConfig.labels,
+            usePointStyle: true, // Use circle points for pie charts
+            pointStyle: 'circle',
+            generateLabels: function(chart: any) {
+              const datasets = chart.data.datasets;
+              if (datasets.length > 0) {
+                const dataset = datasets[0];
+                return chart.data.labels.map((label: string, index: number) => ({
+                  text: label,
+                  fillStyle: dataset.backgroundColor[index],
+                  strokeStyle: dataset.borderColor[index],
+                  lineWidth: dataset.borderWidth,
+                  hidden: false,
+                  index: index,
+                }));
+              }
+              return [];
+            }
+          },
+        };
+
+      case 'bar':
+        return {
+          ...baseConfig,
+          position: 'top' as const,
+          align: 'center' as const,
+          labels: {
+            ...baseConfig.labels,
+            usePointStyle: false,
+            boxWidth: 20,
+            boxHeight: 12,
+          },
+        };
+
+      case 'line':
+        return {
+          ...baseConfig,
+          position: 'top' as const,
+          align: 'center' as const,
+          labels: {
+            ...baseConfig.labels,
+            usePointStyle: true,
+            pointStyle: 'line',
+            boxWidth: 25,
+            boxHeight: 3,
+          },
+        };
+
+      default:
+        return {
+          ...baseConfig,
+          position: 'top' as const,
+          align: 'center' as const,
+        };
+    }
+  };
+
   const options = {
     responsive: true,
     maintainAspectRatio: false,
     plugins: {
-      legend: {
-        position: 'top' as const,
-        labels: {
-          font: {
-            family: 'Inter',
-            size: 12,
-          },
-          color: '#374151',
-        },
-      },
+      legend: getLegendConfig(),
       title: {
         display: !!title,
         text: title,
         font: {
           family: 'Inter',
           size: 16,
-          weight: 'bold',
+          weight: 'bold' as const,
         },
         color: '#1e3a8a',
       },
@@ -372,10 +511,36 @@ const DataChart: React.FC<DataChartProps> = ({ type, data, title, height = 400, 
         cornerRadius: 8,
         displayColors: true,
         callbacks: {
+          title: function(context: any) {
+            if (type === 'pie' || type === 'doughnut') {
+              // For pie charts, show the category name as title
+              return context[0].label || '';
+            } else {
+              // For bar/line charts, show the x-axis label
+              return context[0].label || '';
+            }
+          },
           label: function(context: any) {
             const label = context.dataset.label || '';
             const value = context.parsed.y || context.parsed;
-            return `${label}: ${typeof value === 'number' ? value.toFixed(3) : value}`;
+
+            if (type === 'pie' || type === 'doughnut') {
+              // For pie charts, show percentage and value
+              const total = context.dataset.data.reduce((sum: number, val: number) => sum + val, 0);
+              const percentage = total > 0 ? ((value / total) * 100).toFixed(1) : '0.0';
+              return `${label}: ${typeof value === 'number' ? value.toLocaleString() : value} (${percentage}%)`;
+            } else {
+              // For bar/line charts, show formatted value
+              return `${label}: ${typeof value === 'number' ? value.toLocaleString() : value}`;
+            }
+          },
+          afterLabel: function(context: any) {
+            if (type === 'pie' || type === 'doughnut') {
+              // Additional info for pie charts
+              const total = context.dataset.data.reduce((sum: number, val: number) => sum + val, 0);
+              return `Total: ${total.toLocaleString()}`;
+            }
+            return '';
           }
         }
       },
@@ -446,32 +611,75 @@ const DataChart: React.FC<DataChartProps> = ({ type, data, title, height = 400, 
       }))
     });
 
-    // Check if we have valid data for pie/doughnut charts
+    // Enhanced validation for pie/doughnut charts
     if ((type === 'pie' || type === 'doughnut')) {
+      // Check 1: No datasets available
       if (chartData.datasets.length === 0) {
-        console.error(`❌ No datasets available for ${type} chart`);
+        console.error(`❌ No datasets available for ${type} chart. SelectedYear: ${selectedYear}`);
+
         return (
-          <div className="flex items-center justify-center h-64 bg-red-50 rounded-lg border border-red-200">
-            <div className="text-center">
-              <div className="text-red-400 text-4xl mb-2">⚠️</div>
-              <p className="text-red-600">Tidak ada data untuk pie chart</p>
-              <p className="text-sm text-red-500">Periksa pemilihan tahun atau data</p>
+          <div className="flex items-center justify-center h-64 bg-yellow-50 rounded-lg border border-yellow-200">
+            <div className="text-center max-w-md">
+              <div className="text-yellow-400 text-4xl mb-3">📅</div>
+              <p className="text-yellow-800 font-medium mb-2">Data untuk tahun tidak ditemukan</p>
+              <p className="text-sm text-yellow-700 mb-3">
+                {selectedYear ?
+                  `Tahun ${selectedYear} tidak tersedia dalam data ini.` :
+                  'Tidak ada tahun yang dipilih untuk pie chart.'
+                }
+              </p>
+              <div className="text-xs text-yellow-600 bg-yellow-100 p-2 rounded">
+                💡 <strong>Tips:</strong> Pilih tahun yang tersedia dalam dropdown atau gunakan chart type lain seperti Bar Chart untuk melihat semua tahun.
+              </div>
             </div>
           </div>
         );
       }
 
+      // Check 2: No labels available (empty categories)
       if (chartData.labels.length === 0) {
         console.error(`❌ No labels available for ${type} chart`);
         return (
-          <div className="flex items-center justify-center h-64 bg-red-50 rounded-lg border border-red-200">
-            <div className="text-center">
-              <div className="text-red-400 text-4xl mb-2">📋</div>
-              <p className="text-red-600">Tidak ada label untuk pie chart</p>
-              <p className="text-sm text-red-500">Data mungkin tidak memiliki kategori</p>
+          <div className="flex items-center justify-center h-64 bg-orange-50 rounded-lg border border-orange-200">
+            <div className="text-center max-w-md">
+              <div className="text-orange-400 text-4xl mb-3">📋</div>
+              <p className="text-orange-800 font-medium mb-2">Tidak ada kategori data</p>
+              <p className="text-sm text-orange-700 mb-3">
+                Data untuk tahun {selectedYear || 'yang dipilih'} tidak memiliki kategori yang valid atau semua nilai adalah nol.
+              </p>
+              <div className="text-xs text-orange-600 bg-orange-100 p-2 rounded">
+                💡 <strong>Solusi:</strong> Pastikan data memiliki kolom kategori (wilayah/sektor) dengan nilai positif.
+              </div>
             </div>
           </div>
         );
+      }
+
+      // Check 3: All data values are zero or invalid
+      const firstDataset = chartData.datasets[0];
+      if (firstDataset) {
+        const totalValue = firstDataset.data.reduce((sum, value) => sum + (value || 0), 0);
+        const validValues = firstDataset.data.filter(value => value > 0).length;
+
+        if (totalValue === 0 || validValues === 0) {
+          console.error(`❌ All data values are zero or invalid for ${type} chart`);
+          return (
+            <div className="flex items-center justify-center h-64 bg-blue-50 rounded-lg border border-blue-200">
+              <div className="text-center max-w-md">
+                <div className="text-blue-400 text-4xl mb-3">🔢</div>
+                <p className="text-blue-800 font-medium mb-2">Semua data bernilai nol</p>
+                <p className="text-sm text-blue-700 mb-3">
+                  Data untuk tahun {selectedYear || 'yang dipilih'} tidak memiliki nilai positif untuk ditampilkan dalam pie chart.
+                </p>
+                <div className="text-xs text-blue-600 bg-blue-100 p-2 rounded">
+                  💡 <strong>Tips:</strong> Pie chart hanya menampilkan nilai positif. Coba gunakan Bar Chart untuk melihat data termasuk nilai nol.
+                </div>
+              </div>
+            </div>
+          );
+        }
+
+        console.log(`✅ Pie chart validation passed: ${validValues} valid values out of ${firstDataset.data.length}, total: ${totalValue.toFixed(2)}`);
       }
 
       console.log(`✅ Pie chart data validation passed. Labels: ${chartData.labels.length}, Datasets: ${chartData.datasets.length}`);
